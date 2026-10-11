@@ -289,10 +289,11 @@ private:
         for (int i = 0; i < 5; ++i) {
             e[i] = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
             e[i].binding = i;
-            e[i].visibility = i == 0 || i == 3 ? WGPUShaderStage_Vertex : WGPUShaderStage_Fragment;
+            e[i].visibility = i == 2 ? WGPUShaderStage_Vertex | WGPUShaderStage_Fragment
+                          : i == 0 || i == 3 ? WGPUShaderStage_Vertex : WGPUShaderStage_Fragment;
             e[i].buffer.type = WGPUBufferBindingType_Uniform;
             e[i].buffer.hasDynamicOffset = i < 3;
-            e[i].buffer.minBindingSize = i < 2 ? kConstantBlock : i == 2 ? sizeof(PixelParams) : 256;
+            e[i].buffer.minBindingSize = i < 2 ? kConstantBlock : i == 2 ? sizeof(DrawParams) : 256;
         }
         WGPUBindGroupLayoutDescriptor bgl = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
         bgl.entryCount = 5;
@@ -427,7 +428,7 @@ private:
                 e[i] = WGPU_BIND_GROUP_ENTRY_INIT;
                 e[i].binding = i;
                 e[i].buffer = i < 3 ? uniforms_ : zeros_;
-                e[i].size = i < 2 ? kConstantBlock : i == 2 ? sizeof(PixelParams) : 256;
+                e[i].size = i < 2 ? kConstantBlock : i == 2 ? sizeof(DrawParams) : 256;
             }
             WGPUBindGroupDescriptor g = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
             g.layout = layout0_;

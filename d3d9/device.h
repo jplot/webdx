@@ -358,7 +358,7 @@ private:
     void ResolveBindings();
     template <class S> const ShaderVariant &Variant(S *shader, uint64_t key, const Sm3WgslOptions &options);
     uint32_t Constants(Snapshot &snapshot, bool &dirty, const float (*registers)[4], int maxConst);
-    uint32_t Params();
+    uint32_t Params(float viewportWidth, float viewportHeight);
     void Flush();
 
     std::recursive_mutex mutex_;
@@ -398,7 +398,7 @@ private:
     Snapshot vsSnapshot_, psSnapshot_;
     bool vsConstsDirty_ = true, psConstsDirty_ = true;
     bool paramsValid_ = false;
-    PixelParams params_ = {};
+    DrawParams params_ = {};
     uint32_t paramsOffset_ = 0;
 };
 

@@ -152,10 +152,10 @@ struct PresentCmd {
 constexpr uint32_t kUniformAlign = 256;
 constexpr uint32_t kConstantBlock = 256 * 16;
 
-struct PixelParams {
+struct DrawParams {
     int32_t alphaFunc;   // 0 when the alpha test is off
     float alphaRef;
-    float pad[2];
+    float pixelShift[2];   // 1 / viewport width, -1 / viewport height
 };
 
 class StreamWriter {

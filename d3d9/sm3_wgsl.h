@@ -2,7 +2,8 @@
 //
 // Binding contract with the WebGPU device:
 //   group 0: binding 0 vertex constants, 1 pixel constants (array<vec4f, 256>),
-//            2 pixel parameters (alpha test), 3 vertex / 4 pixel integer constants
+//            2 draw parameters (alpha test, shift of Direct3D 9 pixel centers), 3 vertex / 4 pixel
+//            integer constants
 //   group 1: pixel sampler s -> texture 2s, sampler 2s + 1; vertex sampler s -> 32 + 2s, 33 + 2s
 //   vertex inputs: SM3AttribLocation(usage, index); varyings: TEXCOORD0-9 at 0-9, COLOR0-1 at 10-11
 #pragma once

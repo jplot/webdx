@@ -135,7 +135,8 @@ struct Translator {
             return s.str();
         }
         case RT_MISC:
-            if (p.reg == 0) { usesPos = true; return "vin.fragPos"; }
+            // Direct3D 9 puts pixel centers on integers, WebGPU halfway between.
+            if (p.reg == 0) { usesPos = true; return "vec4f(vin.fragPos.xy - vec2f(0.5), vin.fragPos.zw)"; }
             usesFace = true;
             return "select(vec4f(-1.0), vec4f(1.0), vin.face)";
         case RT_CONSTINT:
@@ -364,10 +365,8 @@ struct Translator {
         o << "struct IntConsts { c: array<vec4i, 16> }\n";
         if (usesConst) o << "@group(0) @binding(" << (pixel ? 1 : 0) << ") var<uniform> " << ConstArray() << ": Consts;\n";
         if (usesIntConst) o << "@group(0) @binding(" << (pixel ? 4 : 3) << ") var<uniform> " << (pixel ? "psi" : "vsi") << ": IntConsts;\n";
-        if (pixel) {
-            o << "struct PixelParams { alphaFunc: i32, alphaRef: f32, pad0: f32, pad1: f32 }\n";
-            o << "@group(0) @binding(2) var<uniform> kb: PixelParams;\n";
-        }
+        o << "struct DrawParams { alphaFunc: i32, alphaRef: f32, pixelShift: vec2f }\n";
+        o << "@group(0) @binding(2) var<uniform> kb: DrawParams;\n";
         for (auto &sd : samplerDim) {
             int s = sd.first, dim = sd.second;
             bool shadow = pixel && ((opt.shadowMask >> s) & 1);
@@ -417,7 +416,9 @@ struct Translator {
             for (auto &out : outputs) o << "    var o" << out.first << " = vec4f(0.0);\n";
             o << body.str();
             o << "    var result: VertexOut;\n";
-            if (positionReg >= 0) o << "    result.pos = o" << positionReg << ";\n";
+            if (positionReg >= 0)
+                o << "    result.pos = vec4f(o" << positionReg << ".xy + kb.pixelShift * o" << positionReg << ".w, o"
+                  << positionReg << ".zw);\n";
             for (auto &out : outputs)
                 if (out.first != positionReg) o << "    result.o" << out.first << " = o" << out.first << ";\n";
             o << "    return result;\n}\n";

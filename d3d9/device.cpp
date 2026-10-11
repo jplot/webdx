@@ -1070,12 +1070,16 @@ uint32_t Device::Constants(Snapshot &snapshot, bool &dirty, const float (*regist
     return snapshot.offset;
 }
 
-uint32_t Device::Params()
+uint32_t Device::Params(float viewportWidth, float viewportHeight)
 {
-    PixelParams p = {};
+    DrawParams p = {};
     if (renderStates_[D3DRS_ALPHATESTENABLE]) {
         p.alphaFunc = (int32_t)renderStates_[D3DRS_ALPHAFUNC];
         p.alphaRef = (renderStates_[D3DRS_ALPHAREF] & 0xFF) / 255.0f;
+    }
+    if (viewportWidth > 0 && viewportHeight > 0) {
+        p.pixelShift[0] = 1.0f / viewportWidth;
+        p.pixelShift[1] = -1.0f / viewportHeight;
     }
     if (!paramsValid_ || std::memcmp(&p, &params_, sizeof p)) {
         params_ = p;
@@ -1145,7 +1149,7 @@ HRESULT Device::Draw(D3DPRIMITIVETYPE type, UINT primCount, bool indexed, UINT f
     }
     cmd.uniforms[0] = Constants(vsSnapshot_, vsConstsDirty_, vsConsts_, vsMaxConst_);
     cmd.uniforms[1] = Constants(psSnapshot_, psConstsDirty_, psConsts_, psMaxConst_);
-    cmd.uniforms[2] = Params();
+    cmd.uniforms[2] = Params(cmd.viewport[2], cmd.viewport[3]);
     cmd.count = count;
     cmd.first = first;
     cmd.baseVertex = baseVertex;
