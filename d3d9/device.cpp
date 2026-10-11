@@ -468,7 +468,7 @@ Device *Device::Create(const D3DPRESENT_PARAMETERS &params)
     return executor ? new Device(executor, params) : nullptr;
 }
 
-Device::Device(Executor *executor, const D3DPRESENT_PARAMETERS &params) : executor_(executor), present_(params)
+Device::Device(Executor *executor, const D3DPRESENT_PARAMETERS &params) : executor_(executor)
 {
     DWORD *rs = renderStates_;
     rs[D3DRS_ZENABLE] = params.EnableAutoDepthStencil ? D3DZB_TRUE : D3DZB_FALSE;
@@ -616,11 +616,7 @@ HRESULT WINAPI Device::GetDeviceCaps(D3DCAPS9 *caps)
     return D3D_OK;
 }
 
-HRESULT WINAPI Device::Reset(D3DPRESENT_PARAMETERS *params)
-{
-    if (params) present_ = *params;
-    return D3D_OK;
-}
+HRESULT WINAPI Device::Reset(D3DPRESENT_PARAMETERS *) { return D3D_OK; }
 
 HRESULT WINAPI Device::GetBackBuffer(UINT, UINT, D3DBACKBUFFER_TYPE, IDirect3DSurface9 **surface)
 {

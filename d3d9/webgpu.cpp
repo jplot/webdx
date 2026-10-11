@@ -183,7 +183,7 @@ private:
     };
     struct Buffer {
         WGPUBuffer handle = nullptr;
-        uint32_t size = 0, segment = 0;
+        uint32_t segment = 0;
     };
     struct Texture {
         WGPUTexture handle = nullptr;
@@ -205,8 +205,6 @@ private:
         WGPUBindGroupLayout group1 = nullptr;
         WGPUPipelineLayout pipeline = nullptr;
     };
-
-    // ---- device ----
 
     void RequestAdapter()
     {
@@ -373,8 +371,6 @@ private:
         return wgpuDeviceCreateShaderModule(device_, &d);
     }
 
-    // ---- replay ----
-
     void Run(const std::vector<uint8_t> &commands, const std::vector<uint8_t> &uniforms)
     {
         if (!uniforms.empty()) UploadUniforms(uniforms);
@@ -479,8 +475,6 @@ private:
         segmentUsesUniforms_ = false;
     }
 
-    // ---- resources ----
-
     WGPUBuffer NewBuffer(uint32_t size)
     {
         WGPUBufferDescriptor d = WGPU_BUFFER_DESCRIPTOR_INIT;
@@ -491,9 +485,7 @@ private:
 
     void CreateBuffer(const BufferCmd &c)
     {
-        Buffer &b = Slot(buffers_, c.id);
-        b.handle = NewBuffer(c.size);
-        b.size = c.size;
+        Slot(buffers_, c.id).handle = NewBuffer(c.size);
     }
 
     void RenameBuffer(const BufferCmd &c)
@@ -569,7 +561,6 @@ private:
         t = Texture{};
     }
 
-    // A single level of a single layer: render target, or blit source.
     WGPUTextureView SubresourceView(const ViewRef &ref)
     {
         Texture &t = textures_[ref.texture];
@@ -760,8 +751,6 @@ private:
         bindings = Bindings{};
     }
 
-    // ---- passes ----
-
     void SetTargets(const TargetsCmd &t)
     {
         ResolveClear();
@@ -899,8 +888,6 @@ private:
         else
             wgpuRenderPassEncoderDraw(pass_, c.count, 1, c.first, 0);
     }
-
-    // ---- copies and presentation ----
 
     WGPURenderPipeline BlitPipeline(WGPUTextureFormat format)
     {

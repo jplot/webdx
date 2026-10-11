@@ -331,7 +331,6 @@ public:
     HRESULT WINAPI CreateQuery(D3DQUERYTYPE type, IDirect3DQuery9 **out) override;
     void WINAPI SetGammaRamp(UINT, DWORD, const D3DGAMMARAMP *) override {}
 
-    // Recording on behalf of the resources.
     std::recursive_mutex &Mutex() { return mutex_; }
     GpuTexture CreateGpuTexture(TexKind kind, D3DFORMAT format, UINT width, UINT height, UINT depth, UINT levels,
                                 DWORD usage);
@@ -368,7 +367,6 @@ private:
     StreamWriter stream_;
     uint32_t submitted_ = 0;
     uint32_t nextBuffer_ = 1, nextTexture_ = 1, nextShader_ = 1, nextPipeline_ = 1, nextBindings_ = 1;
-    D3DPRESENT_PARAMETERS present_;
     Surface *backBuffer_;
     Surface *depthBuffer_ = nullptr;
     SwapChain *swapChain_;

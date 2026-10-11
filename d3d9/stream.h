@@ -42,7 +42,7 @@ enum : uint32_t {
 };
 
 // Texture type a shader declares per sampler: 0 unused, then the sm3 dimension codes, then depth comparison.
-enum : uint8_t { kSlotNone = 0, kSlot2D = 2, kSlotCube = 3, kSlot3D = 4, kSlotDepth = 5 };
+enum : uint8_t { kSlot2D = 2, kSlotCube = 3, kSlot3D = 4, kSlotDepth = 5 };
 
 struct BufferCmd {
     uint32_t id, size;
@@ -167,7 +167,6 @@ public:
         Append(&payload, sizeof(T));
         if (extraSize) Append(extra, extraSize);
     }
-    // Copies a block into the uniforms; returns its offset.
     uint32_t Uniform(const void *data, uint32_t size)
     {
         uint32_t at = (uint32_t)uniforms_.size();
