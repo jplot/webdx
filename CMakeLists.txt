@@ -79,4 +79,13 @@ if (WEBDX_WEB_TESTS AND EMSCRIPTEN)
     target_compile_options(webgpu_clear PRIVATE -pthread --use-port=emdawnwebgpu)
     target_link_options(webgpu_clear PRIVATE -pthread --use-port=emdawnwebgpu -sPROXY_TO_PTHREAD -sEXIT_RUNTIME=0)
     set_target_properties(webgpu_clear PROPERTIES SUFFIX ".html")
+
+    add_executable(device_threads tests/web/device_threads.cpp d3d9/device.cpp d3d9/format.cpp d3d9/sm3_wgsl.cpp)
+    set_target_properties(device_threads PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(device_threads PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/d3d9")
+    target_link_libraries(device_threads PRIVATE webwin)
+    target_include_directories(device_threads PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_options(device_threads PRIVATE -pthread)
+    target_link_options(device_threads PRIVATE -pthread -sPROXY_TO_PTHREAD -sEXIT_RUNTIME=1 -sPTHREAD_POOL_SIZE=8
+        -sINITIAL_MEMORY=512MB)
 endif()
