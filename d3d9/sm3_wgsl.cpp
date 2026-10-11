@@ -78,7 +78,7 @@ struct Translator {
     std::map<int, std::vector<int>> idefs;
     std::set<int> temps;
     bool usesA0 = false, usesPos = false, usesFace = false, usesDepth = false;
-    bool usesConst = false, usesIntConst = false;
+    bool usesConst = false, usesIntConst = false, usesRelConst = false;
     std::set<int> colorOuts;
     std::ostringstream body;
     int depth = 1, loops = 0, nextTemp = 0;
@@ -103,9 +103,9 @@ struct Translator {
         case RT_CONST:
             if (p.relative) {
                 if (p.relType != RT_ADDR) return Fail("relative addressing through a non-a0 register");
-                usesConst = usesA0 = true;
+                usesConst = usesA0 = usesRelConst = true;
                 res.maxConst = 255;
-                s << ConstArray() << ".c[clamp(a0." << kComp[p.relComp] << " + " << p.reg << ", 0, 255)]";
+                s << ConstArray() << "_rel(a0." << kComp[p.relComp] << " + " << p.reg << ")";
                 return s.str();
             }
             if (defs.count(p.reg)) { s << "c" << p.reg << "_def"; return s.str(); }
@@ -385,6 +385,12 @@ struct Translator {
         for (auto &d : idefs)
             o << "const i" << d.first << "_def = vec4i(" << d.second[0] << ", " << d.second[1] << ", "
               << d.second[2] << ", " << d.second[3] << ");\n";
+        // D3D9 relative reads see def constants: Nuketown's sprinkler drops pick their quad corners in c56..c59 by a0.
+        if (usesRelConst) {
+            o << "fn " << ConstArray() << "_rel(i: i32) -> vec4f {\n";
+            for (auto &d : defs) o << "    if (i == " << d.first << ") { return c" << d.first << "_def; }\n";
+            o << "    return " << ConstArray() << ".c[clamp(i, 0, 255)];\n}\n";
+        }
         o << "\n";
 
         if (!pixel) {
