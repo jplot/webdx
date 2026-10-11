@@ -13,6 +13,8 @@
 struct Sm3WgslOptions {
     unsigned shadowMask = 0;   // pixel samplers bound to depth textures: comparison sampling
     unsigned varyingMask = ~0u; // pixel inputs the vertex stage writes (bit = location); others read 0
+    unsigned attribMask = ~0u;  // vertex inputs the declaration provides (bit = location); others read (0,0,0,1)
+    unsigned attribUintMask = 0, attribSintMask = 0;  // vertex inputs fed unnormalized integers
 };
 
 struct Sm3WgslResult {
@@ -22,6 +24,8 @@ struct Sm3WgslResult {
     std::string error;
     unsigned samplerMask = 0;  // sampler registers the shader reads
     unsigned sampler2DMask = 0; // of those, the 2D ones (the only ones that can take a depth texture)
+    unsigned samplerCubeMask = 0, samplerVolumeMask = 0;
+    unsigned colorOutMask = 0;  // pixel: color outputs (bit = render target)
     unsigned varyingMask = 0;  // vertex: locations written; pixel: locations read
     int maxConst = -1;         // highest float constant register read (255 with relative addressing)
 };

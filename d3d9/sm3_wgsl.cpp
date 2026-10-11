@@ -122,6 +122,15 @@ struct Translator {
                 res.varyingMask |= 1u << loc;
                 if (!(opt.varyingMask & (1u << loc))) return "vec4f(0.0)";
             }
+            if (!pixel) {
+                int loc = SM3AttribLocation(it->second.first, it->second.second);
+                if (loc < 0) return Fail("vertex input with an unsupported semantic");
+                if (!(opt.attribMask & (1u << loc))) return "vec4f(0.0, 0.0, 0.0, 1.0)";
+                if ((opt.attribUintMask | opt.attribSintMask) & (1u << loc)) {
+                    s << "vec4f(vin.v" << p.reg << ")";
+                    return s.str();
+                }
+            }
             s << "vin.v" << p.reg;
             return s.str();
         }
@@ -202,6 +211,8 @@ struct Translator {
         int dim = dimIt->second;
         res.samplerMask |= 1u << s;
         if (dim == DIM_2D) res.sampler2DMask |= 1u << s;
+        else if (dim == DIM_CUBE) res.samplerCubeMask |= 1u << s;
+        else if (dim == DIM_VOLUME) res.samplerVolumeMask |= 1u << s;
         std::string t = (pixel ? "tex" : "vs_tex") + std::to_string(s);
         std::string smp = (pixel ? "smp" : "vs_smp") + std::to_string(s);
         std::string c = Source(src[0]);
@@ -379,12 +390,16 @@ struct Translator {
 
         if (!pixel) {
             o << "struct VertexIn {\n";
+            bool any = false;
             for (auto &in : inputs) {
                 int loc = SM3AttribLocation(in.second.first, in.second.second);
                 if (loc < 0) { Fail("vertex input with an unsupported semantic"); continue; }
-                o << "    @location(" << loc << ") v" << in.first << ": vec4f,\n";
+                if (!(opt.attribMask & (1u << loc))) continue;
+                const char *type = (opt.attribUintMask & (1u << loc)) ? "vec4u" : (opt.attribSintMask & (1u << loc)) ? "vec4i" : "vec4f";
+                o << "    @location(" << loc << ") v" << in.first << ": " << type << ",\n";
+                any = true;
             }
-            if (inputs.empty()) o << "    @builtin(vertex_index) unused: u32,\n";
+            if (!any) o << "    @builtin(vertex_index) unused: u32,\n";
             o << "}\n";
             o << "struct VertexOut {\n    @builtin(position) pos: vec4f,\n";
             int positionReg = -1;
@@ -422,6 +437,8 @@ struct Translator {
             for (int c : colorOuts) o << "    @location(" << c << ") c" << c << ": vec4f,\n";
             if (usesDepth) o << "    @builtin(frag_depth) depth: f32,\n";
             if (colorOuts.empty() && !usesDepth) o << "    @location(0) c0: vec4f,\n";
+            for (int c : colorOuts) res.colorOutMask |= 1u << c;
+            if (colorOuts.empty() && !usesDepth) res.colorOutMask = 1;
             o << "}\n\n@fragment\nfn main(vin: PixelIn) -> PixelOut {\n";
             for (int r : temps) o << "    var r" << r << " = vec4f(0.0);\n";
             if (usesA0) o << "    var a0 = vec4i(0);\n";
