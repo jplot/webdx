@@ -195,7 +195,7 @@ private:
     struct Pipeline {
         WGPURenderPipeline handle = nullptr;
         uint32_t streamCount = 0;
-        bool sampled = false;
+        bool sampled = false, compiling = false;
     };
     struct Bindings {
         WGPUBindGroup group = nullptr;
@@ -695,6 +695,7 @@ private:
         Pipeline &pipeline = Slot(pipelines_, p.id);
         pipeline.streamCount = p.streamCount;
         pipeline.sampled = layout.group1 != nullptr;
+        pipeline.compiling = true;
         // Compiled inline, a pipeline held up Chrome's GPU command stream: 24 new ones at the first
         // shot froze Nacht 653 ms. Until it exists, its draws are skipped.
         WGPUCreateRenderPipelineAsyncCallbackInfo info = WGPU_CREATE_RENDER_PIPELINE_ASYNC_CALLBACK_INFO_INIT;
@@ -712,6 +713,7 @@ private:
                     uint32_t id)
     {
         static int reported;
+        pipelines_[id].compiling = false;
         if (status == WGPUCreatePipelineAsyncStatus_Success)
             pipelines_[id].handle = handle;
         else if (reported++ < 20)
@@ -848,7 +850,11 @@ private:
     void Draw(const DrawCmd &c)
     {
         Pipeline &p = pipelines_[c.pipeline];
-        if (!p.handle || (!pass_ && !BeginPass())) return;
+        if (!p.handle) {
+            incomplete_ |= p.compiling;
+            return;
+        }
+        if (!pass_ && !BeginPass()) return;
         Bindings *b = p.sampled && c.bindings < bindings_.size() ? &bindings_[c.bindings] : nullptr;
         if (p.sampled && (!b || !b->group)) return;
         if (passPipeline_ != p.handle) {
@@ -981,8 +987,12 @@ private:
     {
         ResolveClear();
         EndPass();
+        // Missing the draws of pipelines still compiling, a frame flashed black where they belong (the
+        // surfaces a muzzle flash lights); the canvas keeps the previous frame instead.
+        bool show = !incomplete_;
+        incomplete_ = false;
         WGPUSurfaceTexture frame = WGPU_SURFACE_TEXTURE_INIT;
-        wgpuSurfaceGetCurrentTexture(surface_, &frame);
+        if (show) wgpuSurfaceGetCurrentTexture(surface_, &frame);
         if (frame.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
             frame.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
             WGPUTextureView view = wgpuTextureCreateView(frame.texture, nullptr);
@@ -1030,6 +1040,7 @@ private:
     WGPUCommandEncoder encoder_ = nullptr;
     uint32_t segment_ = 1;
     bool segmentUsesUniforms_ = false;
+    bool incomplete_ = false;
     TargetsCmd targets_ = {};
     ClearCmd clear_ = {};
     WGPURenderPassEncoder pass_ = nullptr;
