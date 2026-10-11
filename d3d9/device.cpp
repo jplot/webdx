@@ -462,7 +462,8 @@ HRESULT WINAPI SwapChain::GetBackBuffer(UINT, D3DBACKBUFFER_TYPE type, IDirect3D
 
 // ---- Device: resources -----------------------------------------------------
 
-Device::Device(Executor *executor, const D3DPRESENT_PARAMETERS &params) : executor_(executor)
+Device::Device(Executor *executor, const D3DPRESENT_PARAMETERS &params)
+    : executor_(executor), features_(executor->GetFeatures())
 {
     DWORD *rs = renderStates_;
     rs[D3DRS_ZENABLE] = params.EnableAutoDepthStencil ? D3DZB_TRUE : D3DZB_FALSE;
@@ -518,7 +519,7 @@ GpuTexture Device::CreateGpuTexture(TexKind kind, D3DFORMAT format, UINT width, 
 {
     GpuTexture gpu;
     gpu.kind = kind;
-    gpu.format = GpuFormatOf(format);
+    gpu.format = GpuFormatOf(format, features_);
     if (gpu.format == TexFormat::None) return gpu;
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     gpu.id = nextTexture_++;
@@ -556,6 +557,7 @@ void Device::WriteImage(const GpuTexture &gpu, Image &image, UINT level, UINT la
     if (!gpu.id || IsDepth(gpu.format)) return;
     D3DFORMAT format = image.Format();
     UINT block = LayoutOf(format).block;
+    bool decode = block > 1 && gpu.format == TexFormat::RGBA8;
     // Compressed copies cover whole blocks, up to the level's size rounded up to the block.
     UINT width = (image.Width(level) + block - 1) / block * block;
     UINT height = (image.Height(level) + block - 1) / block * block;
@@ -564,12 +566,17 @@ void Device::WriteImage(const GpuTexture &gpu, Image &image, UINT level, UINT la
     UINT x1 = std::min(width, ((UINT)r.right + block - 1) / block * block);
     UINT y1 = std::min(height, ((UINT)r.bottom + block - 1) / block * block);
     if (x1 <= x || y1 <= y || back <= front) return;
-    TextureWriteCmd cmd = {gpu.id, level, x, y, layer + front, x1 - x, y1 - y, back - front, 0, (y1 - y) / block};
+    UINT outWidth = decode ? std::min(x1, image.Width(level)) - x : x1 - x;
+    UINT outHeight = decode ? std::min(y1, image.Height(level)) - y : y1 - y;
+    TextureWriteCmd cmd = {gpu.id, level, x, y, layer + front, outWidth, outHeight, back - front, 0,
+                           decode ? outHeight : outHeight / block};
     std::vector<uint8_t> bytes;
     RECT at = {(LONG)x, (LONG)y, (LONG)x1, (LONG)y1};
-    for (UINT z = front; z < back; ++z)
-        cmd.bytesPerRow = ConvertRows(format, image.Bits(level, &at, z), image.Pitch(level), x1 - x, cmd.rowsPerImage,
-                                      bytes);
+    for (UINT z = front; z < back; ++z) {
+        const uint8_t *src = image.Bits(level, &at, z);
+        cmd.bytesPerRow = decode ? DecodeDxt(format, src, image.Pitch(level), x1 - x, y1 - y, outWidth, outHeight, bytes)
+                                 : ConvertRows(format, src, image.Pitch(level), x1 - x, cmd.rowsPerImage, bytes);
+    }
     if (!cmd.bytesPerRow) return WarnOnce(unconverted, "texture upload in a format without conversion");
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     stream_.Put(Cmd::WriteTexture, cmd, bytes.data(), (uint32_t)bytes.size());

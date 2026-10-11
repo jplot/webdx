@@ -175,6 +175,7 @@ public:
     }
 
     uint32_t Completed() const override { return completed_.load(); }
+    Features GetFeatures() const override { return features_; }
 
 private:
     struct Job {
@@ -226,19 +227,23 @@ private:
             return;
         }
         adapter_ = adapter;
-        static const WGPUFeatureName features[] = {WGPUFeatureName_TextureCompressionBC,
-                                                   WGPUFeatureName_Float32Filterable,
-                                                   WGPUFeatureName_Depth32FloatStencil8};
-        for (WGPUFeatureName f : features) {
-            if (!wgpuAdapterHasFeature(adapter, f)) {
-                fprintf(stderr, "[webdx] WebGPU adapter lacks feature %d\n", (int)f);
-                state_ = -1;
-                return;
-            }
+        // The engine filters its R32F and RG32F textures; WebGL 2 does, WebGPU only with this feature.
+        if (!wgpuAdapterHasFeature(adapter, WGPUFeatureName_Float32Filterable)) {
+            fprintf(stderr, "[webdx] WebGPU adapter lacks float32-filterable\n");
+            state_ = -1;
+            return;
         }
+        features_.bc = wgpuAdapterHasFeature(adapter, WGPUFeatureName_TextureCompressionBC);
+        features_.depth32Stencil8 = wgpuAdapterHasFeature(adapter, WGPUFeatureName_Depth32FloatStencil8);
+        WGPUFeatureName required[3] = {WGPUFeatureName_Float32Filterable};
+        size_t count = 1;
+        if (features_.bc) required[count++] = WGPUFeatureName_TextureCompressionBC;
+        if (features_.depth32Stencil8) required[count++] = WGPUFeatureName_Depth32FloatStencil8;
+        fprintf(stderr, "[webdx] WebGPU adapter: texture-compression-bc %d, depth32float-stencil8 %d\n", features_.bc,
+                features_.depth32Stencil8);
         WGPUDeviceDescriptor desc = WGPU_DEVICE_DESCRIPTOR_INIT;
-        desc.requiredFeatureCount = sizeof features / sizeof features[0];
-        desc.requiredFeatures = features;
+        desc.requiredFeatureCount = count;
+        desc.requiredFeatures = required;
         desc.uncapturedErrorCallbackInfo.callback = [](WGPUDevice const *, WGPUErrorType, WGPUStringView message,
                                                        void *, void *) {
             static int reported;
@@ -1014,6 +1019,7 @@ private:
     WGPUQueue queue_ = nullptr;
     WGPUSurface surface_ = nullptr;
     WGPUTextureFormat surfaceFormat_ = WGPUTextureFormat_Undefined;
+    Features features_;
 
     std::vector<Buffer> buffers_;
     std::vector<Texture> textures_;

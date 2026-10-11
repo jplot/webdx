@@ -27,6 +27,7 @@ public:
     }
 
     uint32_t Completed() const override { return submitted_.load(); }
+    Features GetFeatures() const override { return {}; }
 
     // False when the stream holds a command it cannot read.
     bool Replay(std::map<uint32_t, std::vector<uint8_t>> &buffers)

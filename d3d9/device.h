@@ -363,6 +363,7 @@ private:
 
     std::recursive_mutex mutex_;
     std::unique_ptr<Executor> executor_;
+    Features features_;
     StreamWriter stream_;
     uint32_t submitted_ = 0;
     uint32_t nextBuffer_ = 1, nextTexture_ = 1, nextShader_ = 1, nextPipeline_ = 1, nextBindings_ = 1;

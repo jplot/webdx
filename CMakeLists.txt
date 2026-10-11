@@ -88,4 +88,9 @@ if (WEBDX_WEB_TESTS AND EMSCRIPTEN)
     target_compile_options(device_threads PRIVATE -pthread)
     target_link_options(device_threads PRIVATE -pthread -sPROXY_TO_PTHREAD -sEXIT_RUNTIME=1 -sPTHREAD_POOL_SIZE=8
         -sINITIAL_MEMORY=512MB)
+
+    add_executable(dxt_decode tests/web/dxt_decode.cpp d3d9/format.cpp)
+    set_target_properties(dxt_decode PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(dxt_decode PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/d3d9" "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(dxt_decode PRIVATE webwin)
 endif()
