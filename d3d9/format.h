@@ -1,7 +1,10 @@
-// format.h — memory layout of Direct3D 9 surface formats.
+// format.h — memory layout of Direct3D 9 surface formats and their GPU counterparts.
 #pragma once
 
+#include "stream.h"
+
 #include <d3d9.h>
+#include <vector>
 
 namespace webdx {
 
@@ -25,5 +28,13 @@ inline UINT RowCount(D3DFORMAT format, UINT height)
 }
 
 inline UINT MipSize(UINT size, UINT level) { return size >> level ? size >> level : 1; }
+
+// TexFormat::None for surfaces without data of their own (D3DFMT_UNKNOWN, the 'NULL' render target).
+TexFormat GpuFormatOf(D3DFORMAT format);
+
+// Appends `rows` rows of `width` texels (block rows and block-aligned texels for DXT) converted to
+// GpuFormatOf(format); returns the converted row size, 0 when the format has no conversion.
+UINT ConvertRows(D3DFORMAT format, const uint8_t *src, UINT srcPitch, UINT width, UINT rows,
+                 std::vector<uint8_t> &out);
 
 } // namespace webdx

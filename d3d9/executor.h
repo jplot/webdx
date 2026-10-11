@@ -9,8 +9,9 @@ namespace webdx {
 class Executor {
 public:
     virtual ~Executor() = default;
-    // Takes the commands recorded since the last call; runs them asynchronously, in order.
-    virtual void Submit(std::vector<uint8_t> &&commands) = 0;
+    // Takes the commands recorded since the last call and the uniforms their draws address;
+    // runs them asynchronously, in order.
+    virtual void Submit(std::vector<uint8_t> &&commands, std::vector<uint8_t> &&uniforms) = 0;
     // Submissions fully executed so far.
     virtual uint32_t Completed() const = 0;
 };
