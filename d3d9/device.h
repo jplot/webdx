@@ -107,6 +107,7 @@ public:
     ViewRef View() const { return {gpu_.id, level_, layer_}; }
     UINT Width() const { return image_->Width(level_); }
     UINT Height() const { return image_->Height(level_); }
+    D3DFORMAT Format() const { return image_->Format(); }
 
 private:
     std::unique_ptr<Image> own_;
@@ -389,6 +390,7 @@ private:
     bool targetsDirty_ = true, pipelineDirty_ = true, bindingsDirty_ = true;
     TargetsCmd emittedTargets_ = {};
     TexFormat targetFormats_[kMaxTargets] = {}, depthFormat_ = TexFormat::None;
+    unsigned saturateTargets_ = 0;
     UINT targetWidth_ = 0, targetHeight_ = 0;
     PipelineCmd pipeline_ = {};
     uint32_t streamOf_[kMaxStreams] = {};   // Direct3D stream of each of the pipeline's buffers

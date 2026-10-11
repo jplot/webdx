@@ -462,7 +462,8 @@ struct Translator {
               << "        if (!passed) { discard; }\n"
               << "    }\n";
             o << "    var result: PixelOut;\n";
-            for (int c : colorOuts) o << "    result.c" << c << " = oC" << c << ";\n";
+            for (int c : colorOuts)
+                o << "    result.c" << c << " = " << ((opt.saturateMask >> c & 1) ? "saturate(oC" : "(oC") << c << ");\n";
             if (usesDepth) o << "    result.depth = oDepth.x;\n";
             o << "    return result;\n}\n";
         }

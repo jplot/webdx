@@ -16,6 +16,7 @@ struct Sm3WgslOptions {
     unsigned varyingMask = ~0u; // pixel inputs the vertex stage writes (bit = location); others read 0
     unsigned attribMask = ~0u;  // vertex inputs the declaration provides (bit = location); others read (0,0,0,1)
     unsigned attribUintMask = 0, attribSintMask = 0;  // vertex inputs fed unnormalized integers
+    unsigned saturateMask = 0;  // pixel: color outputs clamped to [0, 1] (bit = render target)
 };
 
 struct Sm3WgslResult {

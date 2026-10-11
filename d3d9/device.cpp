@@ -875,12 +875,15 @@ void Device::EmitTargets()
     targetsDirty_ = false;
     TargetsCmd cmd = {};
     TexFormat formats[kMaxTargets] = {};
+    unsigned saturate = 0;
     UINT width = 0, height = 0;
     for (UINT i = 0; i < kMaxTargets; ++i) {
         Surface *s = targets_[i];
         if (!s || !s->Gpu().id) continue;
         cmd.colors[i] = s->View();
         formats[i] = s->Gpu().format;
+        // Direct3D clamps writes to unorm targets; these two are floats here to stay filterable (BO1's glow chain).
+        if (s->Format() == D3DFMT_A16B16G16R16 || s->Format() == D3DFMT_G16R16) saturate |= 1u << i;
         if (!width) width = s->Width(), height = s->Height();
     }
     TexFormat depthFormat = TexFormat::None;
@@ -896,7 +899,10 @@ void Device::EmitTargets()
     }
     cmd.width = width;
     cmd.height = height;
-    if (std::memcmp(formats, targetFormats_, sizeof formats) || depthFormat != depthFormat_) pipelineDirty_ = true;
+    if (std::memcmp(formats, targetFormats_, sizeof formats) || depthFormat != depthFormat_ ||
+        saturate != saturateTargets_)
+        pipelineDirty_ = true;
+    saturateTargets_ = saturate;
     std::memcpy(targetFormats_, formats, sizeof formats);
     depthFormat_ = depthFormat;
     targetWidth_ = width;
@@ -943,7 +949,9 @@ bool Device::ResolvePipeline(D3DPRIMITIVETYPE type, uint32_t indexFormat)
     Sm3WgslOptions po;
     po.shadowMask = shadow;
     po.varyingMask = vv.varyingMask;
-    const ShaderVariant &pv = Variant(ps_, shadow | (uint64_t)vv.varyingMask << 32, po);
+    po.saturateMask = saturateTargets_;
+    const ShaderVariant &pv =
+        Variant(ps_, shadow | (uint64_t)saturateTargets_ << 16 | (uint64_t)vv.varyingMask << 32, po);
     if (!vv.module || !pv.module) return false;
 
     PipelineCmd p;
