@@ -693,9 +693,29 @@ private:
         d.fragment = &fragment;
 
         Pipeline &pipeline = Slot(pipelines_, p.id);
-        pipeline.handle = wgpuDeviceCreateRenderPipeline(device_, &d);
         pipeline.streamCount = p.streamCount;
         pipeline.sampled = layout.group1 != nullptr;
+        // Compiled inline, a pipeline held up Chrome's GPU command stream: 24 new ones at the first
+        // shot froze Nacht 653 ms. Until it exists, its draws are skipped.
+        WGPUCreateRenderPipelineAsyncCallbackInfo info = WGPU_CREATE_RENDER_PIPELINE_ASYNC_CALLBACK_INFO_INIT;
+        info.mode = WGPUCallbackMode_AllowSpontaneous;
+        info.userdata1 = this;
+        info.userdata2 = (void *)(uintptr_t)p.id;
+        info.callback = [](WGPUCreatePipelineAsyncStatus status, WGPURenderPipeline handle, WGPUStringView message,
+                           void *self, void *id) {
+            static_cast<WebGpuExecutor *>(self)->OnPipeline(status, handle, message, (uint32_t)(uintptr_t)id);
+        };
+        wgpuDeviceCreateRenderPipelineAsync(device_, &d, info);
+    }
+
+    void OnPipeline(WGPUCreatePipelineAsyncStatus status, WGPURenderPipeline handle, WGPUStringView message,
+                    uint32_t id)
+    {
+        static int reported;
+        if (status == WGPUCreatePipelineAsyncStatus_Success)
+            pipelines_[id].handle = handle;
+        else if (reported++ < 20)
+            fprintf(stderr, "[webdx] pipeline %u failed: %.*s\n", id, (int)message.length, message.data);
     }
 
     WGPUSampler Sampler(const SamplerDesc &s, bool comparison)
