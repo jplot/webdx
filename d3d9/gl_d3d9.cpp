@@ -3,6 +3,7 @@
 #include "glcontext.h"
 #include "gl_resources.h"
 #include "gl_optrace.h"
+#include "device.h"
 
 #include <GL/glew.h>
 extern "C" void KB_FlushBatchedDraws();
@@ -10,6 +11,8 @@ extern "C" void KB_FlushTagged(int cause); // +flush-cause telemetry  // batched
 
 #include <SDL2/SDL.h>   // adapter display-mode queries (EnumAdapterModes etc.)
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/html5_webgl.h>  // emscripten_webgl_get_current_context()
 #include <emscripten.h>              // EM_ASM_INT (?noslopebias toggle in FillDefaultCaps)
@@ -20,21 +23,25 @@ extern "C" void glDepthRangef(float, float);      // GLES/WebGL2 depth-range
 #if defined(__EMSCRIPTEN__)
 // KB_DEVHOT forwarders (see winsdk/d3d9.h): the hot device methods are NON-virtual on
 // web, so every engine call site compiles to a direct call here, which direct-calls the
-// GLDevice member (its same-name declaration hides these) — no fpcast-emu trampoline,
-// no indirect call. GLDevice is the only device implementation on this build.
-HRESULT WINAPI IDirect3DDevice9::SetViewport(const D3DVIEWPORT9 *p) { return static_cast<GLDevice *>(this)->SetViewport(p); }
-HRESULT WINAPI IDirect3DDevice9::SetRenderState(D3DRENDERSTATETYPE s, DWORD v) { return static_cast<GLDevice *>(this)->SetRenderState(s, v); }
-HRESULT WINAPI IDirect3DDevice9::SetSamplerState(DWORD s, D3DSAMPLERSTATETYPE t, DWORD v) { return static_cast<GLDevice *>(this)->SetSamplerState(s, t, v); }
-HRESULT WINAPI IDirect3DDevice9::SetTexture(DWORD st, IDirect3DBaseTexture9 *t) { return static_cast<GLDevice *>(this)->SetTexture(st, t); }
-HRESULT WINAPI IDirect3DDevice9::SetStreamSource(UINT n, IDirect3DVertexBuffer9 *vb, UINT off, UINT stride) { return static_cast<GLDevice *>(this)->SetStreamSource(n, vb, off, stride); }
-HRESULT WINAPI IDirect3DDevice9::SetIndices(IDirect3DIndexBuffer9 *ib) { return static_cast<GLDevice *>(this)->SetIndices(ib); }
-HRESULT WINAPI IDirect3DDevice9::SetVertexDeclaration(IDirect3DVertexDeclaration9 *d) { return static_cast<GLDevice *>(this)->SetVertexDeclaration(d); }
-HRESULT WINAPI IDirect3DDevice9::SetVertexShader(IDirect3DVertexShader9 *sh) { return static_cast<GLDevice *>(this)->SetVertexShader(sh); }
-HRESULT WINAPI IDirect3DDevice9::SetVertexShaderConstantF(UINT r, const float *d, UINT n) { return static_cast<GLDevice *>(this)->SetVertexShaderConstantF(r, d, n); }
-HRESULT WINAPI IDirect3DDevice9::SetPixelShader(IDirect3DPixelShader9 *sh) { return static_cast<GLDevice *>(this)->SetPixelShader(sh); }
-HRESULT WINAPI IDirect3DDevice9::SetPixelShaderConstantF(UINT r, const float *d, UINT n) { return static_cast<GLDevice *>(this)->SetPixelShaderConstantF(r, d, n); }
-HRESULT WINAPI IDirect3DDevice9::DrawPrimitive(D3DPRIMITIVETYPE t, UINT sv, UINT pc) { return static_cast<GLDevice *>(this)->DrawPrimitive(t, sv, pc); }
-HRESULT WINAPI IDirect3DDevice9::DrawIndexedPrimitive(D3DPRIMITIVETYPE t, INT bv, UINT mv, UINT nv, UINT si, UINT pc) { return static_cast<GLDevice *>(this)->DrawIndexedPrimitive(t, bv, mv, nv, si, pc); }
+// device member (its same-name declaration hides these) — no fpcast-emu trampoline,
+// no indirect call. CreateDevice picks GLDevice or the WebGPU front end once.
+static bool g_webGpuDevice = false;
+#define KB_DEVHOT_CALL(method, ...) \
+    (g_webGpuDevice ? static_cast<webdx::Device *>(this)->method(__VA_ARGS__) \
+                    : static_cast<GLDevice *>(this)->method(__VA_ARGS__))
+HRESULT WINAPI IDirect3DDevice9::SetViewport(const D3DVIEWPORT9 *p) { return KB_DEVHOT_CALL(SetViewport, p); }
+HRESULT WINAPI IDirect3DDevice9::SetRenderState(D3DRENDERSTATETYPE s, DWORD v) { return KB_DEVHOT_CALL(SetRenderState, s, v); }
+HRESULT WINAPI IDirect3DDevice9::SetSamplerState(DWORD s, D3DSAMPLERSTATETYPE t, DWORD v) { return KB_DEVHOT_CALL(SetSamplerState, s, t, v); }
+HRESULT WINAPI IDirect3DDevice9::SetTexture(DWORD st, IDirect3DBaseTexture9 *t) { return KB_DEVHOT_CALL(SetTexture, st, t); }
+HRESULT WINAPI IDirect3DDevice9::SetStreamSource(UINT n, IDirect3DVertexBuffer9 *vb, UINT off, UINT stride) { return KB_DEVHOT_CALL(SetStreamSource, n, vb, off, stride); }
+HRESULT WINAPI IDirect3DDevice9::SetIndices(IDirect3DIndexBuffer9 *ib) { return KB_DEVHOT_CALL(SetIndices, ib); }
+HRESULT WINAPI IDirect3DDevice9::SetVertexDeclaration(IDirect3DVertexDeclaration9 *d) { return KB_DEVHOT_CALL(SetVertexDeclaration, d); }
+HRESULT WINAPI IDirect3DDevice9::SetVertexShader(IDirect3DVertexShader9 *sh) { return KB_DEVHOT_CALL(SetVertexShader, sh); }
+HRESULT WINAPI IDirect3DDevice9::SetVertexShaderConstantF(UINT r, const float *d, UINT n) { return KB_DEVHOT_CALL(SetVertexShaderConstantF, r, d, n); }
+HRESULT WINAPI IDirect3DDevice9::SetPixelShader(IDirect3DPixelShader9 *sh) { return KB_DEVHOT_CALL(SetPixelShader, sh); }
+HRESULT WINAPI IDirect3DDevice9::SetPixelShaderConstantF(UINT r, const float *d, UINT n) { return KB_DEVHOT_CALL(SetPixelShaderConstantF, r, d, n); }
+HRESULT WINAPI IDirect3DDevice9::DrawPrimitive(D3DPRIMITIVETYPE t, UINT sv, UINT pc) { return KB_DEVHOT_CALL(DrawPrimitive, t, sv, pc); }
+HRESULT WINAPI IDirect3DDevice9::DrawIndexedPrimitive(D3DPRIMITIVETYPE t, INT bv, UINT mv, UINT nv, UINT si, UINT pc) { return KB_DEVHOT_CALL(DrawIndexedPrimitive, t, bv, mv, nv, si, pc); }
 #endif
 
 // glClearDepth/glDepthRange take doubles and are desktop-GL only. Under WebGL2 the
@@ -60,7 +67,7 @@ static inline void KB_glDepthRange(double n, double f) {
 
 // Default device caps, shared by GLDevice::GetDeviceCaps and GLD3D9::GetDeviceCaps.
 // These advertise an SM3.0-class GPU, which is what the Black Ops renderer expects.
-static void FillDefaultCaps(D3DCAPS9 *c) {
+void FillDefaultCaps(D3DCAPS9 *c) {
     *c = D3DCAPS9{};
     c->DeviceType              = D3DDEVTYPE_HAL;
     c->MaxTextureWidth         = 8192;
@@ -511,6 +518,20 @@ HRESULT WINAPI GLD3D9::CreateDevice(UINT /*Adapter*/, D3DDEVTYPE /*DeviceType*/,
     GLContextDesc desc;
     desc.width        = pp->BackBufferWidth  ? (int)pp->BackBufferWidth  : 640;
     desc.height       = pp->BackBufferHeight ? (int)pp->BackBufferHeight : 480;
+#if defined(__EMSCRIPTEN__)
+    const char *renderer = getenv("KB_RENDERER");
+    if (renderer && !strcmp(renderer, "webgpu")) {
+        D3DPRESENT_PARAMETERS params = *pp;
+        params.BackBufferWidth = (UINT)desc.width;
+        params.BackBufferHeight = (UINT)desc.height;
+        if (webdx::Device *device = webdx::Device::Create(params)) {
+            g_webGpuDevice = true;
+            *ppReturnedDeviceInterface = device;
+            return D3D_OK;
+        }
+        fprintf(stderr, "[webdx] WebGPU unavailable, using WebGL 2\n");
+    }
+#endif
     desc.doubleBuffer = true;
     desc.depthStencil = pp->EnableAutoDepthStencil ? true : true;
     desc.visible      = pp->Windowed ? true : true;

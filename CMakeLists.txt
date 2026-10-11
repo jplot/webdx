@@ -36,6 +36,9 @@ target_include_directories(webdx
 target_link_libraries(webdx PUBLIC webwin)
 
 if (EMSCRIPTEN)
+    target_sources(webdx PRIVATE d3d9/device.cpp d3d9/format.cpp d3d9/sm3_wgsl.cpp d3d9/webgpu.cpp)
+    target_compile_options(webdx PRIVATE --use-port=emdawnwebgpu)
+    target_link_options(webdx INTERFACE --use-port=emdawnwebgpu)
     target_link_options(webdx INTERFACE
         -sMAX_WEBGL_VERSION=2
         -sMIN_WEBGL_VERSION=2
