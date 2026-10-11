@@ -1,0 +1,355 @@
+// gl_d3d9.h — OpenGL-backed implementations of the D3D9 interfaces.
+//
+// This is the heart of the translation layer: GLD3D9 implements IDirect3D9 and
+// GLDevice implements IDirect3DDevice9 on top of OpenGL. The renderer in
+// src/gfx_d3d is unchanged — it still calls Direct3DCreate9()/CreateDevice() and
+// drives the returned interfaces.
+//
+// Methods that are not yet ported are stubbed inline so the layer keeps building
+// and the device keeps running while they are filled in:
+//   * state setters return D3D_OK (no-op) — wrong pixels, but no crash;
+//   * resource creators return E_NOTIMPL until their GL resource classes land.
+// Each stub is marked TODO so coverage is greppable.
+#ifndef KISAK_GL_D3D9_H
+#define KISAK_GL_D3D9_H
+
+#include "gl_object.h"
+#include <map>
+#include <set>
+#include <array>
+#include <cstdint>
+
+class GLContext;
+
+// Shadow-stack opt-in switch (gl_resources.cpp; ?shadows=1 -> ENV.KB_SHADOWS).
+extern "C" int KB_ShadowsEnabled();
+class GLVertexBuffer;
+class GLIndexBuffer;
+class GLVertexDeclaration;
+class GLTexture;
+class GLSurface;
+class GLSwapChain;
+class GLVertexShader;
+class GLPixelShader;
+
+// D3D sampler state, kept in D3D terms and translated to GL at draw time.
+struct GLSamplerState {
+    DWORD minFilter = D3DTEXF_LINEAR;
+    DWORD magFilter = D3DTEXF_LINEAR;
+    DWORD addressU  = D3DTADDRESS_WRAP;
+    DWORD addressV  = D3DTADDRESS_WRAP;
+};
+
+// Fixed-function texture-stage state (D3DTSS_*), kept in D3D terms and folded into
+// the built-in fragment shader's tex/diffuse combine at draw time. Defaults match
+// D3D's stage-0 defaults: COLOROP = MODULATE(TEXTURE, DIFFUSE).
+struct GLTextureStageState {
+    DWORD colorOp   = D3DTOP_MODULATE;
+    DWORD colorArg1 = D3DTA_TEXTURE;
+    DWORD colorArg2 = D3DTA_DIFFUSE;
+};
+
+// Alpha-test state (removed from core GL), emulated via discard in the fragment
+// shader. Defaults match D3D: disabled, ALWAYS, ref 0.
+struct GLAlphaTestState {
+    bool  enable = false;
+    DWORD func   = D3DCMP_ALWAYS;
+    DWORD ref    = 0;  // 0..255
+};
+
+// ---- IDirect3DDevice9 -> OpenGL -------------------------------------------
+class GLDevice final : public GLObject<IDirect3DDevice9> {
+public:
+    explicit GLDevice(GLContext *ctx, int width, int height);
+    ~GLDevice() override;
+
+    // --- Frame / target (gl_d3d9.cpp) ---
+    HRESULT WINAPI TestCooperativeLevel() override { return D3D_OK; }
+    UINT    WINAPI GetAvailableTextureMem() override { return 256u * 1024 * 1024; }
+    HRESULT WINAPI GetDeviceCaps(D3DCAPS9 *pCaps) override;
+    HRESULT WINAPI Reset(D3DPRESENT_PARAMETERS *pp) override;
+    HRESULT WINAPI Present(const RECT *, const RECT *, HWND, const RGNDATA *) override;
+    HRESULT WINAPI BeginScene() override { inScene_ = true;  return D3D_OK; }
+    HRESULT WINAPI EndScene() override   { inScene_ = false; return D3D_OK; }
+    HRESULT WINAPI Clear(DWORD Count, const D3DRECT *pRects, DWORD Flags, D3DCOLOR Color,
+                         float Z, DWORD Stencil) override;
+    HRESULT WINAPI SetViewport(const D3DVIEWPORT9 *pViewport) KB_DEVHOT_OVERRIDE;
+
+    // --- Geometry resources + draw (gl_d3d9_draw.cpp) ---
+    HRESULT WINAPI CreateVertexBuffer(UINT Length, DWORD Usage, DWORD FVF, D3DPOOL Pool,
+                                      IDirect3DVertexBuffer9 **ppVB, HANDLE *) override;
+    HRESULT WINAPI CreateIndexBuffer(UINT Length, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool,
+                                     IDirect3DIndexBuffer9 **ppIB, HANDLE *) override;
+    HRESULT WINAPI CreateVertexDeclaration(const D3DVERTEXELEMENT9 *pElements,
+                                           IDirect3DVertexDeclaration9 **ppDecl) override;
+    HRESULT WINAPI SetStreamSource(UINT StreamNumber, IDirect3DVertexBuffer9 *pStreamData,
+                                   UINT OffsetInBytes, UINT Stride) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetIndices(IDirect3DIndexBuffer9 *pIndexData) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetVertexDeclaration(IDirect3DVertexDeclaration9 *pDecl) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType, UINT StartVertex,
+                                 UINT PrimitiveCount) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI DrawIndexedPrimitive(D3DPRIMITIVETYPE Type, INT BaseVertexIndex,
+                                        UINT MinVertexIndex, UINT NumVertices,
+                                        UINT startIndex, UINT primCount) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI DrawPrimitiveUP(D3DPRIMITIVETYPE, UINT, const void *, UINT) override { return D3D_OK; }
+
+    // --- Render / sampler / texture state (gl_state.cpp) ---
+    HRESULT WINAPI SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetSamplerState(DWORD Sampler, D3DSAMPLERSTATETYPE Type, DWORD Value) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetTextureStageState(DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value) override;
+    HRESULT WINAPI SetTexture(DWORD Stage, IDirect3DBaseTexture9 *pTexture) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetScissorRect(const RECT *pRect) override;
+    HRESULT WINAPI SetVertexShader(IDirect3DVertexShader9 *pShader) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetVertexShaderConstantF(UINT StartRegister, const float *pData, UINT Vec4Count) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetPixelShader(IDirect3DPixelShader9 *pShader) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetPixelShaderConstantF(UINT StartRegister, const float *pData, UINT Vec4Count) KB_DEVHOT_OVERRIDE;
+    HRESULT WINAPI SetRenderTarget(DWORD RenderTargetIndex, IDirect3DSurface9 *pRenderTarget) override;
+    HRESULT WINAPI SetDepthStencilSurface(IDirect3DSurface9 *pNewZStencil) override;
+    void    WINAPI SetGammaRamp(UINT, DWORD, const D3DGAMMARAMP *) override {}
+
+    // --- Not yet ported: textures / surfaces / shaders / queries — TODO(task #4/#5) ---
+    HRESULT WINAPI GetBackBuffer(UINT, UINT, D3DBACKBUFFER_TYPE, IDirect3DSurface9 **pp) override;
+    HRESULT WINAPI GetSwapChain(UINT, IDirect3DSwapChain9 **pp) override;
+    HRESULT WINAPI CreateTexture(UINT Width, UINT Height, UINT Levels, DWORD Usage,
+                                 D3DFORMAT Format, D3DPOOL Pool,
+                                 IDirect3DTexture9 **ppTexture, HANDLE *) override;
+    HRESULT WINAPI CreateVolumeTexture(UINT Width, UINT Height, UINT Depth, UINT Levels, DWORD Usage,
+                                       D3DFORMAT Format, D3DPOOL Pool, IDirect3DVolumeTexture9 **ppVolumeTexture, HANDLE *) override;
+    HRESULT WINAPI CreateCubeTexture(UINT EdgeLength, UINT Levels, DWORD Usage, D3DFORMAT Format,
+                                     D3DPOOL Pool, IDirect3DCubeTexture9 **ppCubeTexture, HANDLE *) override;
+    HRESULT WINAPI CreateRenderTarget(UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE,
+                                      DWORD, BOOL, IDirect3DSurface9 **ppSurface, HANDLE *) override;
+    HRESULT WINAPI CreateOffscreenPlainSurface(UINT Width, UINT Height, D3DFORMAT Format, D3DPOOL,
+                                               IDirect3DSurface9 **ppSurface, HANDLE *) override;
+    HRESULT WINAPI GetRenderTargetData(IDirect3DSurface9 *pRenderTarget,
+                                       IDirect3DSurface9 *pDestSurface) override;
+    HRESULT WINAPI StretchRect(IDirect3DSurface9 *pSourceSurface, const RECT *pSourceRect,
+                               IDirect3DSurface9 *pDestSurface, const RECT *pDestRect,
+                               D3DTEXTUREFILTERTYPE Filter) override;
+    // Still stubbed (TODO): standalone depth-stencil surfaces, UpdateSurface.
+    HRESULT WINAPI CreateDepthStencilSurface(UINT, UINT, D3DFORMAT, D3DMULTISAMPLE_TYPE, DWORD, BOOL, IDirect3DSurface9 **pp, HANDLE *) override;
+    HRESULT WINAPI UpdateSurface(IDirect3DSurface9 *, const RECT *, IDirect3DSurface9 *, const POINT *) override { return E_NOTIMPL; }
+    HRESULT WINAPI CreateVertexShader(const DWORD *pFunction, IDirect3DVertexShader9 **ppShader) override;
+    HRESULT WINAPI CreatePixelShader(const DWORD *pFunction, IDirect3DPixelShader9 **ppShader) override;
+    HRESULT WINAPI CreateQuery(D3DQUERYTYPE Type, IDirect3DQuery9 **ppQuery) override;
+
+private:
+    // ps_3_0 addresses 16 sampler stages (s0..s15). The lit world/material
+    // shaders use the high samplers (s11 lightmap, s15 lookup, s12..s14) — with
+    // fewer stages those bind to nothing and sample unit 0, turning lightmapped
+    // surfaces magenta while low-sampler models render fine.
+    static const int kMaxStages = 16;
+
+    template <class T> static HRESULT ni(T **pp) { if (pp) *pp = nullptr; return E_NOTIMPL; }
+    void ensureBuiltinProgram();  // lazily compile the built-in pre-transformed-vertex shader
+    struct LinkedProgram;         // defined below
+    void bindBuiltinForDraw();    // use built-in program + set frame/texture uniforms
+    bool useDrawProgram();        // bind shader program (or built-in) + set uniforms; false = not linked yet, skip draw
+    bool finalizeProgram(LinkedProgram &lp);  // poll link completion (non-blocking) + cache uniform locations
+    void applyVertexState();      // set up VAO attribs from decl_ + streams_
+public:
+    void flushInstanceRun();      // emit the accumulated instance run (?inst); called by KB_FlushTagged (free fn)
+private:
+    bool applyTextures();         // bind stage-0 texture + sampler state; returns true if sampling
+    void applyStageSampler(unsigned stage, unsigned target); // apply stage's filter/wrap to bound tex
+    GLSurface *backBufferSurface(); // lazily create the back-buffer surface (FBO 0 view)
+    // Attach a correctly-sized auto depth-stencil renderbuffer to the live FBO and
+    // GUARANTEE completeness (color-only last resort). Used wherever a DS attach left
+    // the FBO incomplete — a stale or broken depth attachment otherwise no-ops every
+    // draw of the pass = the scene goes (and stays) black.
+    void kbRestoreAutoDepth(int w, int h);
+    // Guarantee the live custom FBO is COMPLETE by giving its colour texture renderable,
+    // RT-sized storage (RGBA16F HDR, then RGBA8) — done once per (texture,size). Some RT
+    // textures reach SetRenderTarget without renderable storage (wrong usage flag,
+    // off-GL-thread creation, A16B16G16R16->non-renderable RGBA16), making the FBO
+    // GL_FRAMEBUFFER_UNSUPPORTED so every draw no-ops = black scene. tex = colour texture.
+    void kbEnsureRTComplete(unsigned tex, int w, int h);
+    std::map<unsigned long long, int> rtFixed_;   // (tex<<32|wh) -> chosen internalformat
+
+    GLContext *ctx_ = nullptr;
+    int  fbWidth_   = 0;   // current render-target dimensions (back buffer or FBO)
+    int  fbHeight_  = 0;
+    int  bbWidth_   = 0;   // back-buffer dimensions (restored when RT is unset)
+    int  bbHeight_  = 0;
+    unsigned fbo_       = 0;  // reused FBO for render-to-texture
+    unsigned fboDepth_  = 0;  // its depth-stencil renderbuffer
+    int      fboDepthW_ = 0;
+    int      fboDepthH_ = 0;
+    bool inScene_   = false;
+
+    // Back buffer / swap chain — the window's default framebuffer (FBO 0),
+    // exposed to the renderer through GetBackBuffer()/GetSwapChain().
+    GLSurface   *backBuffer_ = nullptr;  // owned
+    GLSwapChain *swapChain_  = nullptr;  // owned
+
+    unsigned vao_                 = 0;
+    unsigned builtinProg_         = 0;
+    int      builtinViewportLoc_  = -1;
+    int      builtinTexLoc_       = -1;
+    int      builtinUseTexLoc_    = -1;
+    int      builtinColorOpLoc_   = -1;  // 0 = SELECTARG1 (tex), 1 = MODULATE (tex*diffuse)
+    int      builtinAlphaFuncLoc_ = -1;  // GL-style compare func, or 0 = disabled
+    int      builtinAlphaRefLoc_  = -1;  // [0,1] reference
+
+    // Redundant-state elimination (WebGL hates per-draw state changes; each is a marshaled
+    // call on the proxied context). curProgram_ skips redundant glUseProgram; rsCache_/rsSet_
+    // skip redundant SetRenderState GL calls (blend/depth/cull/colorwrite/etc.).
+    unsigned      curProgram_ = 0;
+    DWORD         rsCache_[256] = {};
+    unsigned char rsSet_[256]   = {};
+
+    struct Stream { GLVertexBuffer *vb = nullptr; UINT offset = 0; UINT stride = 0; };
+    Stream               streams_[4];
+    GLIndexBuffer       *ib_   = nullptr;
+    GLVertexDeclaration *decl_ = nullptr;
+
+    // VAO cache: one VAO per (decl, stream bindings) combination. applyVertexState
+    // used to re-specify ~15-20 GL calls of attrib state on EVERY draw (~200k GL
+    // calls/frame at 10k draws — measured 65ms/frame even on a local context);
+    // a cache hit is a single glBindVertexArray. Entries also track the VAO's
+    // captured GL_ELEMENT_ARRAY_BUFFER binding so unchanged index buffers skip
+    // their per-draw rebind. Invalidated wholesale when any vertex/index buffer
+    // or declaration is destroyed (g_kbVaoEpoch — GL object names get reused).
+    struct VaoEntry { unsigned vao = 0; unsigned elem = 0; };
+    std::map<std::array<unsigned, 13>, VaoEntry> vaoCache_;
+    VaoEntry *curVaoEnt_   = nullptr;
+    unsigned  curVao_      = 0;
+    unsigned  vaoEpochSeen_ = 0;
+
+    // Bound textures, resolved to a GL name + target in SetTexture so the bind
+    // path is texture-type aware (2D / cube / volume) without a blind downcast.
+    unsigned       boundTexName_[kMaxStages]   = {};   // GL texture object (0 = none)
+    unsigned       boundTexTarget_[kMaxStages] = {};   // GL_TEXTURE_2D / _CUBE_MAP / _3D
+    bool           boundTexIsDepth_[kMaxStages] = {};  // depth texture bound (shadow sampling)
+    GLSurface     *curDS_     = nullptr;               // engine-set depth-stencil (shadow map)
+    bool           fboActive_ = false;                 // rendering to fbo_ (not the backbuffer)
+    bool           dsLive_    = false;                 // honored DS attached (shadow build pass)
+    unsigned long long fboOkPairs_[8] = {};            // (colorTex<<32|dsTex) pairs verified COMPLETE
+    int            fboOkN_ = 0;
+    unsigned       curRTColorTex_ = 0;                 // colour tex of the live custom RT (for DS-pair keys)
+    bool           scissorOn_ = false;                 // tracked GL_SCISSOR_TEST state (avoid per-Clear glIsEnabled sync round-trip)
+    // FBO configs (colorTex,w,h) already verified GL_FRAMEBUFFER_COMPLETE. glCheckFramebufferStatus
+    // is a SYNCHRONOUS proxied round-trip — at 28% of the DOM thread in the CPU trace it was the
+    // single biggest cost, dwarfing actual drawing. Completeness cannot regress for immutable
+    // attachment storage, so check once per config then skip forever.
+    std::set<unsigned long long> fboComplete_;
+    GLSamplerState samplers_[kMaxStages];
+    GLTextureStageState texStage0_;     // stage-0 fixed-function combine (built-in program)
+    GLAlphaTestState    alphaTest_;     // alpha-test emulation (built-in program)
+
+    // Blend factors are set by two separate render states but applied together.
+    DWORD blendSrc_  = D3DBLEND_ONE;
+    DWORD blendDest_ = D3DBLEND_ZERO;
+    // Lazy blend state: SRCBLEND/DESTBLEND/BLENDOP/ALPHABLENDENABLE only stage the shadow
+    // values + set blendDirty_; commitBlendState() (called once per draw from useDrawProgram)
+    // resolves them into at most one glEnable/glBlendFunc/glBlendEquation each, skipping any
+    // whose already-applied value is unchanged. Kills the SRC-then-DEST double glBlendFunc and
+    // the redundant blend toggles WebGL2/ANGLE pays dearly for. appliedBlend* mirror the GL
+    // state actually emitted (so commit is idempotent across batched draws).
+    bool   blendEnabled_       = false;          // D3DRS_ALPHABLENDENABLE shadow
+    DWORD  blendOp_            = D3DBLENDOP_ADD;  // D3DRS_BLENDOP shadow
+    bool   blendDirty_         = true;           // a blend render-state changed since last commit
+    int      appliedBlendEnabled_ = -1;          // -1 = unknown (force first emit)
+    unsigned appliedBlendSrc_   = 0xFFFFFFFFu;   // GLenum; sentinel != any GL factor (GL_ZERO is 0!)
+    unsigned appliedBlendDest_  = 0xFFFFFFFFu;
+    unsigned appliedBlendOp_    = 0xFFFFFFFFu;
+    void   commitBlendState();
+
+    // Alpha test (func + ref are set separately but applied together via glAlphaFunc).
+    DWORD alphaFunc_ = D3DCMP_ALWAYS;
+    DWORD alphaRef_  = 0;
+    // On WebGL2/GLES (no fixed-function GL_ALPHA_TEST) the cutout is emulated with
+    // discard in the translated fragment shaders, fed by uAlphaTestFunc/uAlphaRef.
+    // alphaTestOn_ mirrors D3DRS_ALPHATESTENABLE so useDrawProgram can upload them.
+    bool  alphaTestOn_ = false;
+
+    // Programmable shader path: bound shaders, c# constant registers, and a cache
+    // of linked (vs,ps) programs keyed by (vsShaderId<<32 | psShaderId).
+    GLVertexShader *vs_ = nullptr;
+    GLPixelShader  *ps_ = nullptr;
+    float           vsConst_[256 * 4] = {};
+    float           psConst_[256 * 4] = {};
+    unsigned        vsVer_ = 1, psVer_ = 1;   // bumped when constants actually change
+    // Dirty register span covering every change with version in (DirtyBaseVer, Ver].
+    // A program whose upVer >= DirtyBaseVer only needs this span re-uploaded, not the
+    // whole 256-vec4 array (the engine touches a few matrix registers per draw).
+    unsigned        vsDirtyMin_ = 256, vsDirtyMax_ = 0, vsDirtyBaseVer_ = 1;
+    unsigned        psDirtyMin_ = 256, psDirtyMax_ = 0, psDirtyBaseVer_ = 1;
+    unsigned        unitTex_[kMaxStages] = {};        // per-GL-unit bound texture cache
+    struct { unsigned tex = 0; unsigned char minF = 255, magF = 255, wS = 255, wT = 255; }
+                    stageSamplerCache_[kMaxStages];   // last sampler params applied per stage
+    struct LinkedProgram { unsigned prog = 0; int vscLoc = -1; int pscLoc = -1;
+                           // Number of vec4s the shader's vsc[]/psc[] constant array
+                           // actually declares. Uploading only these per draw (instead of
+                           // a blanket 256+256) is the main web draw-call cost reduction.
+                           int vscCount = 0; int pscCount = 0;
+                           int alphaFuncLoc = -1; int alphaRefLoc = -1;
+                           // Last alpha-test values uploaded — these change per material
+                           // batch, not per draw; unconditional re-upload was 2 GL calls
+                           // on every one of ~10k draws.
+                           int upAlphaFunc = -999; float upAlphaRef = -999.0f;
+                           // Versions of the constant arrays last uploaded to this
+                           // program — constants change per material/pass, not per
+                           // draw, so most of the per-draw glUniform4fv pairs (the
+                           // dominant proxied-GL cost at ~13k draws/frame) skip.
+                           unsigned upVsVer = 0; unsigned upPsVer = 0;
+                           // Sampler uniform locations ("s0".."s15"), queried ONCE at
+                           // link. Per-draw glGetUniformLocation is a sync round-trip on
+                           // the proxied web context — caching it removes 16 stalls/draw.
+                           int samplerLoc[kMaxStages] = {};
+                           // false until the async link completes and locs are cached;
+                           // draws using it are skipped until then (no DOM-thread stall).
+                           bool ready = false;
+                           // Link-failure self-heal: a transiently-distressed GPU process
+                           // fails links with empty logs; the program is deleted and
+                           // re-linked later (bounded) instead of staying invalid forever.
+                           int linkTries = 0; unsigned long lastFailPres = 0;
+                           // COMPLETION_STATUS is polled once per PRESENT (not per draw):
+                           // per-draw polling burns the whole budget in microseconds and
+                           // then trusts getters that don't block on this ANGLE.
+                           unsigned long lastPollPres = ~0ul;
+                           // KHR_parallel_shader_compile completion polls so far. The
+                           // async completion signal may need the worker's event loop
+                           // (never pumped) — after a bounded number of polls the link is
+                           // FORCED to finish with a blocking query (see finalizeProgram).
+                           int pendPolls = 0;
+                           // Verified-bind cache: glUseProgram is REJECTED (0x502) for a
+                           // program whose link result Chrome's client hasn't received yet
+                           // (the worker event loop that delivers it never pumps). Most
+                           // programs deliver within a few frames; until a bind succeeds,
+                           // the draw is SKIPPED (invisible) rather than run with the
+                           // previously-bound program (garbage). Set once a bind is clean.
+                           bool bindOk = false; };
+    std::map<uint64_t, LinkedProgram> progCache_;
+};
+
+// ---- IDirect3D9 -> OpenGL (the factory object) ----------------------------
+class GLD3D9 final : public GLObject<IDirect3D9> {
+public:
+    UINT    WINAPI GetAdapterCount() override { return 1; }
+    HRESULT WINAPI GetAdapterIdentifier(UINT, DWORD, D3DADAPTER_IDENTIFIER9 *pIdentifier) override;
+    UINT    WINAPI GetAdapterModeCount(UINT, D3DFORMAT) override;
+    HRESULT WINAPI EnumAdapterModes(UINT, D3DFORMAT, UINT Mode, D3DDISPLAYMODE *pMode) override;
+    HMONITOR WINAPI GetAdapterMonitor(UINT) override { return (HMONITOR)(intptr_t)1; }
+    HRESULT WINAPI GetAdapterDisplayMode(UINT, D3DDISPLAYMODE *pMode) override;
+    HRESULT WINAPI GetDeviceCaps(UINT, D3DDEVTYPE, D3DCAPS9 *pCaps) override;
+    HRESULT WINAPI CheckDeviceType(UINT, D3DDEVTYPE, D3DFORMAT, D3DFORMAT, BOOL) override { return D3D_OK; }
+    HRESULT WINAPI CheckDeviceFormat(UINT, D3DDEVTYPE, D3DFORMAT, DWORD, D3DRESOURCETYPE,
+                                     D3DFORMAT CheckFormat) override {
+        // The engine PROBES formats in preference order — saying yes to everything makes
+        // it pick vendor FOURCC hacks ('NULL', INTZ, ...) this layer cannot back. Reject
+        // unknown FOURCCs (DXT1/3/5 excepted) so the probe falls through to a real format.
+        unsigned f = (unsigned)CheckFormat;
+        if (KB_ShadowsEnabled() && f > 0x200 &&
+            f != 827611204u /*DXT1*/ && f != 861165636u /*DXT3*/ && f != 894720068u /*DXT5*/)
+            return D3DERR_NOTAVAILABLE;
+        return D3D_OK;
+    }
+    HRESULT WINAPI CheckDeviceMultiSampleType(UINT, D3DDEVTYPE, D3DFORMAT, BOOL, D3DMULTISAMPLE_TYPE, DWORD *pQ) override { if (pQ) *pQ = 1; return D3D_OK; }
+    HRESULT WINAPI CheckDepthStencilMatch(UINT, D3DDEVTYPE, D3DFORMAT, D3DFORMAT, D3DFORMAT) override { return D3D_OK; }
+    HRESULT WINAPI CreateDevice(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
+                                DWORD BehaviorFlags, D3DPRESENT_PARAMETERS *pp,
+                                IDirect3DDevice9 **ppReturnedDeviceInterface) override;
+};
+
+#endif // KISAK_GL_D3D9_H
