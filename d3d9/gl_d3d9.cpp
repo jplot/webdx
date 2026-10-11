@@ -520,7 +520,7 @@ HRESULT WINAPI GLD3D9::CreateDevice(UINT /*Adapter*/, D3DDEVTYPE /*DeviceType*/,
     desc.height       = pp->BackBufferHeight ? (int)pp->BackBufferHeight : 480;
 #if defined(__EMSCRIPTEN__)
     const char *renderer = getenv("KB_RENDERER");
-    if (renderer && !strcmp(renderer, "webgpu")) {
+    if (!renderer || strcmp(renderer, "webgl")) {
         D3DPRESENT_PARAMETERS params = *pp;
         params.BackBufferWidth = (UINT)desc.width;
         params.BackBufferHeight = (UINT)desc.height;
