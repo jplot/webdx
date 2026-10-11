@@ -142,6 +142,49 @@ struct VertexOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f }
 @fragment fn fs(in: VertexOut) -> @location(0) vec4f { return textureSample(source, sourceSampler, in.uv); }
 )";
 
+// Pipelines met in earlier sessions, in IndexedDB: WGSL modules keyed by hash, pipeline keys by
+// themselves. Every record goes back to the executor through webdx_cache_found, then kind 2.
+EM_JS(void, webdx_cache_load, (void *self, const char *name), {
+    const deliver = (kind, bytes) => {
+        const p = bytes ? _malloc(bytes.length) : 0;
+        if (p) HEAPU8.set(bytes, p);
+        _webdx_cache_found(self, kind, p, bytes ? bytes.length : 0);
+        if (p) _free(p);
+    };
+    const open = indexedDB.open(UTF8ToString(name), 1);
+    open.onupgradeneeded = () => {
+        open.result.createObjectStore('modules');
+        open.result.createObjectStore('pipelines');
+    };
+    open.onsuccess = () => {
+        const db = Module.webdxPipelineCache = open.result;
+        const tx = db.transaction(['modules', 'pipelines']);
+        const modules = tx.objectStore('modules').getAll(), pipelines = tx.objectStore('pipelines').getAll();
+        tx.oncomplete = () => {
+            for (const m of modules.result) deliver(0, new Uint8Array(m));
+            for (const p of pipelines.result) deliver(1, new Uint8Array(p));
+            deliver(2, null);
+        };
+    };
+});
+
+EM_JS(void, webdx_cache_put, (int pipeline, const void *key, int keyLength, const void *value, int valueLength), {
+    const db = Module.webdxPipelineCache;
+    if (!db) return;
+    const store = pipeline ? 'pipelines' : 'modules';
+    db.transaction(store, 'readwrite').objectStore(store).put(HEAPU8.slice(value, value + valueLength).buffer,
+                                                              HEAPU8.slice(key, key + keyLength).buffer);
+});
+
+EM_JS_DEPS(webdx_cache, "malloc,free,$UTF8ToString,webdx_cache_found");
+
+uint64_t Hash(const uint8_t *p, size_t n)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < n; ++i) h = (h ^ p[i]) * 1099511628211ull;
+    return h;
+}
+
 template <class T> T &Slot(std::vector<T> &v, uint32_t id)
 {
     if (id >= v.size()) v.resize(id + 1);
@@ -197,6 +240,11 @@ private:
         WGPURenderPipeline handle = nullptr;
         uint32_t streamCount = 0;
         bool sampled = false, compiling = false;
+    };
+    // A pipeline in terms that outlive a session: its shaders by WGSL hash, the rest of PipelineCmd.
+    struct PipelineKey {
+        uint64_t vs, ps;
+        PipelineCmd desc;   // id, vs and ps zero
     };
     struct Bindings {
         WGPUBindGroup group = nullptr;
@@ -284,6 +332,9 @@ private:
         wgpuSurfaceConfigure(surface_, &config);
         wgpuSurfaceCapabilitiesFreeMembers(caps);
         CreateFixedObjects();
+        char cache[64];
+        snprintf(cache, sizeof cache, "webdx-pipelines-1-bc%d-d%d", features_.bc, features_.depth32Stencil8);
+        webdx_cache_load(this, cache);
         fprintf(stderr, "[webdx] WebGPU device ready (%dx%d)\n", width_, height_);
         state_ = 1;
     }
@@ -400,8 +451,7 @@ private:
                 break;
             case Cmd::DestroyTexture: DestroyTexture(StreamReader::Read<TextureCmd>(p)); break;
             case Cmd::CreateShader:
-                Slot(shaders_, StreamReader::Read<ShaderCmd>(p).id) =
-                    ShaderModule((const char *)p + sizeof(ShaderCmd), size - sizeof(ShaderCmd));
+                CreateShader(StreamReader::Read<ShaderCmd>(p).id, p + sizeof(ShaderCmd), size - sizeof(ShaderCmd));
                 break;
             case Cmd::CreatePipeline: CreatePipeline(StreamReader::Read<PipelineCmd>(p)); break;
             case Cmd::CreateBindings: CreateBindings(StreamReader::Read<BindingsCmd>(p)); break;
@@ -622,7 +672,63 @@ private:
         return layouts_.emplace(std::move(key), layout).first->second;
     }
 
+    // Identical WGSL from different Direct3D shaders shares one module.
+    WGPUShaderModule Module(const uint8_t *text, uint32_t size, uint64_t hash, bool store)
+    {
+        WGPUShaderModule &module = modules_[hash];
+        if (!module) {
+            module = ShaderModule((const char *)text, size);
+            if (store) webdx_cache_put(0, &hash, sizeof hash, text, (int)size);
+        }
+        return module;
+    }
+
+    void CreateShader(uint32_t id, const uint8_t *text, uint32_t size)
+    {
+        uint64_t hash = Hash(text, size);
+        Slot(shaders_, id) = Module(text, size, hash, true);
+        Slot(shaderHashes_, id) = hash;
+    }
+
     void CreatePipeline(const PipelineCmd &p)
+    {
+        PipelineKey key;
+        std::memset(&key, 0, sizeof key);
+        key.vs = shaderHashes_[p.vs];
+        key.ps = shaderHashes_[p.ps];
+        key.desc = p;
+        key.desc.id = key.desc.vs = key.desc.ps = 0;
+        std::string bytes((const char *)&key, sizeof key);
+        auto it = byKey_.find(bytes);
+        if (it == byKey_.end()) {
+            it = byKey_.emplace(bytes, Compile(key.desc, shaders_[p.vs], shaders_[p.ps])).first;
+            webdx_cache_put(1, bytes.data(), (int)bytes.size(), bytes.data(), (int)bytes.size());
+        }
+        Slot(pipelines_, p.id) = it->second;
+    }
+
+public:
+    // Compiles earlier sessions' pipelines while the engine loads its map, so that first sight of a
+    // material no longer holds frames back.
+    void OnCached(int kind, const uint8_t *data, int size)
+    {
+        if (kind == 0) {
+            Module(data, (uint32_t)size, Hash(data, (size_t)size), false);
+        } else if (kind == 1 && size == (int)sizeof(PipelineKey)) {
+            PipelineKey key;
+            std::memcpy(&key, data, sizeof key);
+            auto vs = modules_.find(key.vs), ps = modules_.find(key.ps);
+            std::string bytes((const char *)data, (size_t)size);
+            if (vs == modules_.end() || ps == modules_.end() || byKey_.count(bytes)) return;
+            byKey_.emplace(std::move(bytes), Compile(key.desc, vs->second, ps->second));
+            ++warmed_;
+        } else if (kind == 2) {
+            fprintf(stderr, "[webdx] pipeline cache: %zu modules, %u pipelines warming up\n", modules_.size(), warmed_);
+        }
+    }
+
+private:
+    uint32_t Compile(const PipelineCmd &p, WGPUShaderModule vs, WGPUShaderModule ps)
     {
         Layout &layout = LayoutFor(p.slots);
         WGPUVertexAttribute attrs[kMaxAttrs];
@@ -645,7 +751,7 @@ private:
         }
         WGPURenderPipelineDescriptor d = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
         d.layout = layout.pipeline;
-        d.vertex.module = shaders_[p.vs];
+        d.vertex.module = vs;
         d.vertex.entryPoint = View("main");
         d.vertex.bufferCount = p.streamCount;
         d.vertex.buffers = buffers;
@@ -691,13 +797,14 @@ private:
             targetCount = i + 1;
         }
         WGPUFragmentState fragment = WGPU_FRAGMENT_STATE_INIT;
-        fragment.module = shaders_[p.ps];
+        fragment.module = ps;
         fragment.entryPoint = View("main");
         fragment.targetCount = targetCount;
         fragment.targets = targets;
         d.fragment = &fragment;
 
-        Pipeline &pipeline = Slot(pipelines_, p.id);
+        uint32_t index = (uint32_t)compiled_.size();
+        Pipeline &pipeline = compiled_.emplace_back();
         pipeline.streamCount = p.streamCount;
         pipeline.sampled = layout.group1 != nullptr;
         pipeline.compiling = true;
@@ -706,23 +813,24 @@ private:
         WGPUCreateRenderPipelineAsyncCallbackInfo info = WGPU_CREATE_RENDER_PIPELINE_ASYNC_CALLBACK_INFO_INIT;
         info.mode = WGPUCallbackMode_AllowSpontaneous;
         info.userdata1 = this;
-        info.userdata2 = (void *)(uintptr_t)p.id;
+        info.userdata2 = (void *)(uintptr_t)index;
         info.callback = [](WGPUCreatePipelineAsyncStatus status, WGPURenderPipeline handle, WGPUStringView message,
                            void *self, void *id) {
             static_cast<WebGpuExecutor *>(self)->OnPipeline(status, handle, message, (uint32_t)(uintptr_t)id);
         };
         wgpuDeviceCreateRenderPipelineAsync(device_, &d, info);
+        return index;
     }
 
     void OnPipeline(WGPUCreatePipelineAsyncStatus status, WGPURenderPipeline handle, WGPUStringView message,
-                    uint32_t id)
+                    uint32_t index)
     {
         static int reported;
-        pipelines_[id].compiling = false;
+        compiled_[index].compiling = false;
         if (status == WGPUCreatePipelineAsyncStatus_Success)
-            pipelines_[id].handle = handle;
+            compiled_[index].handle = handle;
         else if (reported++ < 20)
-            fprintf(stderr, "[webdx] pipeline %u failed: %.*s\n", id, (int)message.length, message.data);
+            fprintf(stderr, "[webdx] pipeline %u failed: %.*s\n", index, (int)message.length, message.data);
     }
 
     WGPUSampler Sampler(const SamplerDesc &s, bool comparison)
@@ -854,7 +962,7 @@ private:
 
     void Draw(const DrawCmd &c)
     {
-        Pipeline &p = pipelines_[c.pipeline];
+        Pipeline &p = compiled_[pipelines_[c.pipeline]];
         if (!p.handle) {
             incomplete_ |= p.compiling;
             return;
@@ -1024,7 +1132,12 @@ private:
     std::vector<Buffer> buffers_;
     std::vector<Texture> textures_;
     std::vector<WGPUShaderModule> shaders_;
-    std::vector<Pipeline> pipelines_;
+    std::vector<uint64_t> shaderHashes_;
+    std::unordered_map<uint64_t, WGPUShaderModule> modules_;
+    std::vector<Pipeline> compiled_;
+    std::vector<uint32_t> pipelines_;   // index in compiled_ by the front end's pipeline id
+    std::unordered_map<std::string, uint32_t> byKey_;
+    uint32_t warmed_ = 0;
     std::vector<Bindings> bindings_;
     std::map<std::string, Layout> layouts_;
     std::unordered_map<std::string, WGPUSampler> samplers_;
@@ -1065,6 +1178,11 @@ private:
 };
 
 } // namespace
+
+extern "C" EMSCRIPTEN_KEEPALIVE void webdx_cache_found(void *self, int kind, const uint8_t *data, int size)
+{
+    static_cast<WebGpuExecutor *>(self)->OnCached(kind, data, size);
+}
 
 Executor *CreateWebGpuExecutor(int width, int height)
 {
