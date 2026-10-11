@@ -462,12 +462,6 @@ HRESULT WINAPI SwapChain::GetBackBuffer(UINT, D3DBACKBUFFER_TYPE type, IDirect3D
 
 // ---- Device: resources -----------------------------------------------------
 
-Device *Device::Create(const D3DPRESENT_PARAMETERS &params)
-{
-    Executor *executor = CreateWebGpuExecutor((int)params.BackBufferWidth, (int)params.BackBufferHeight);
-    return executor ? new Device(executor, params) : nullptr;
-}
-
 Device::Device(Executor *executor, const D3DPRESENT_PARAMETERS &params) : executor_(executor)
 {
     DWORD *rs = renderStates_;

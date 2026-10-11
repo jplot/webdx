@@ -524,9 +524,9 @@ HRESULT WINAPI GLD3D9::CreateDevice(UINT /*Adapter*/, D3DDEVTYPE /*DeviceType*/,
         D3DPRESENT_PARAMETERS params = *pp;
         params.BackBufferWidth = (UINT)desc.width;
         params.BackBufferHeight = (UINT)desc.height;
-        if (webdx::Device *device = webdx::Device::Create(params)) {
+        if (webdx::Executor *executor = webdx::CreateWebGpuExecutor(desc.width, desc.height)) {
             g_webGpuDevice = true;
-            *ppReturnedDeviceInterface = device;
+            *ppReturnedDeviceInterface = new webdx::Device(executor, params);
             return D3D_OK;
         }
         fprintf(stderr, "[webdx] WebGPU unavailable, using WebGL 2\n");

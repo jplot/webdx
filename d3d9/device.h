@@ -262,7 +262,7 @@ private:
 
 class Device final : public GLObject<IDirect3DDevice9> {
 public:
-    static Device *Create(const D3DPRESENT_PARAMETERS &params);
+    Device(Executor *executor, const D3DPRESENT_PARAMETERS &params);
     ~Device() override;
 
     HRESULT WINAPI TestCooperativeLevel() override { return D3D_OK; }
@@ -352,7 +352,6 @@ private:
         uint32_t offset = 0, count = 0;
     };
 
-    Device(Executor *executor, const D3DPRESENT_PARAMETERS &params);
     HRESULT Draw(D3DPRIMITIVETYPE type, UINT primCount, bool indexed, UINT first, INT baseVertex);
     void EmitTargets();
     bool ResolvePipeline(D3DPRIMITIVETYPE type, uint32_t indexFormat);
